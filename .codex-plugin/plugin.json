@@ -1,0 +1,18 @@
+{
+  "name": "pkg-owner",
+  "version": "0.1.0",
+  "description": "Read-only macOS software package ownership lookup with list and fuzzy search.",
+  "author": {
+    "name": "Local developer"
+  },
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Pkg Owner",
+    "shortDescription": "Find which manager owns a macOS app or command.",
+    "longDescription": "Query applications and PATH commands with package-manager records, fuzzy search, and explicit evidence boundaries.",
+    "developerName": "Local developer",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": "Find which package manager manages this application or command using pkg-owner."
+  }
+}

@@ -1,0 +1,203 @@
+#!/usr/bin/env python3
+"""Read-only macOS software ownership inventory; Python standard library only."""
+import argparse
+import concurrent.futures
+import difflib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+
+
+def run(args):
+    env = dict(os.environ, HOMEBREW_NO_AUTO_UPDATE='1', HOMEBREW_NO_ANALYTICS='1')
+    p = subprocess.run(args, capture_output=True, text=True, timeout=40, env=env)
+    if p.returncode:
+        raise RuntimeError(p.stderr.strip()[:180] or 'exit ' + str(p.returncode))
+    return p.stdout
+
+
+def record(name, manager, evidence, paths=(), aliases=()):
+    return dict(name=name, manager=manager, evidence=evidence,
+                paths=list(map(str, paths)), aliases=list(aliases))
+
+
+def brew():
+    data = json.loads(run(['brew', 'info', '--json=v2', '--installed']))
+    prefix = Path(shutil.which('brew')).resolve().parent.parent
+    rows = []
+    for f in data.get('formulae', []):
+        root = prefix / 'Cellar' / f['name']
+        paths = [root]
+        for installed in root.glob('*'):
+            for folder in ('bin', 'sbin'):
+                paths.extend((installed / folder).glob('*'))
+        rows.append(record(f['name'], 'Homebrew Formula', 'brew installed record', paths,
+                           f.get('aliases', []) + [p.name for p in paths[1:]]))
+    for c in data.get('casks', []):
+        paths = []
+        for artifact in c.get('artifacts', []):
+            for kind in ('app', 'binary'):
+                values = artifact.get(kind, [])
+                if values and isinstance(values[0], str):
+                    source = Path(values[0])
+                    target = next((v['target'] for v in values[1:] if isinstance(v, dict) and 'target' in v), None)
+                    if target:
+                        paths.append(Path(target).expanduser())
+                    elif kind == 'app':
+                        paths.extend(p / source for p in (Path('/Applications'), Path.home() / 'Applications') if (p / source).exists())
+        rows.append(record(c['token'], 'Homebrew Cask', 'brew installed record', paths, c.get('name', [])))
+    return rows
+
+
+def npm():
+    data = json.loads(run(['npm', 'ls', '-g', '--depth=0', '--json']))
+    root = Path(run(['npm', 'root', '-g']).strip())
+    return [record(n, 'npm global', 'npm ls -g', [root / n]) for n in data.get('dependencies', {})]
+
+
+def pipx():
+    data = json.loads(run(['pipx', 'list', '--json']))
+    return [record(n, 'pipx', 'pipx list', aliases=v.get('metadata', {}).get('main_package', {}).get('apps', [])) for n, v in data.get('venvs', {}).items()]
+
+
+def uv():
+    # uv tool list can create locks/cache. Inspect receipts without invoking uv.
+    base = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
+    root = Path(os.environ.get('UV_TOOL_DIR', str(base / 'uv/tools'))).expanduser()
+    return [record(p.parent.name, 'uv tool', 'uv-receipt.toml 安装记录', [p.parent]) for p in root.glob('*/uv-receipt.toml')]
+
+
+def cargo():
+    return [record(line.split()[0], 'Cargo', 'cargo install --list') for line in run(['cargo', 'install', '--list']).splitlines() if line and not line[0].isspace()]
+
+
+def port():
+    return [record(line.split()[0], 'MacPorts', 'port installed (active)') for line in run(['port', 'installed']).splitlines() if '(active)' in line]
+
+
+def scan_apps(extra):
+    apps = set()
+    try:
+        apps.update(Path(p) for p in run(['mdfind', "kMDItemContentType == 'com.apple.application-bundle'"]).splitlines() if p.endswith('.app'))
+    except (OSError, RuntimeError, subprocess.TimeoutExpired):
+        pass
+    for root in [Path('/Applications'), Path('/System/Applications'), Path.home() / 'Applications'] + extra:
+        if root.suffix == '.app':
+            apps.add(root)
+            continue
+        for parent, dirs, _ in os.walk(root):
+            for d in list(dirs):
+                if d.endswith('.app'):
+                    apps.add(Path(parent) / d)
+                    dirs.remove(d)
+    return sorted(p for p in apps if p.is_dir())
+
+
+def normalize(value):
+    return ''.join(c for c in value.casefold() if c.isalnum())
+
+
+def matches(row, query, fuzzy=False):
+    q = normalize(query)
+    values = [row['name']] + row['aliases'] + row['paths'] + [Path(p).stem for p in row['paths']]
+    if fuzzy:
+        values += [word for value in list(values) for word in re.findall(r'\w+', value)]
+    for value in values:
+        v = normalize(value)
+        if q == v or (fuzzy and (q in v or difflib.SequenceMatcher(None, q, v).ratio() >= .72)):
+            return True
+    return False
+
+
+def main():
+    parser = argparse.ArgumentParser(description='查询 macOS 软件由谁管理（只读）')
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument('--list', action='store_true', help='列出已发现的软件与命令')
+    group.add_argument('--search', metavar='TEXT', help='模糊搜索：子串及相似拼写')
+    parser.add_argument('application', nargs='?', help='软件名、命令名或绝对路径')
+    parser.add_argument('--scan-dir', action='append', default=[], help='额外递归扫描目录，可重复')
+    parser.add_argument('--json', action='store_true', help='JSON 输出，包含证据与扫描警告')
+    args = parser.parse_args()
+    if not (args.list or args.search or args.application):
+        parser.print_help()
+        return 0
+    if args.application and (args.list or args.search):
+        parser.error('位置参数不能与 --list / --search 同时使用')
+    rows, warnings = [], []
+    collectors = {n: f for n, f in [('brew', brew), ('npm', npm), ('pipx', pipx), ('uv', uv), ('cargo', cargo), ('port', port)] if shutil.which(n)}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as pool:
+        jobs = {pool.submit(f): n for n, f in collectors.items()}
+        for job in concurrent.futures.as_completed(jobs):
+            try:
+                rows.extend(job.result())
+            except Exception as exc:
+                warnings.append(jobs[job] + ': ' + str(exc))
+    owned = {}
+    for row in rows:
+        for p in row['paths']:
+            owned[str(Path(p).resolve())] = row
+    extra = [Path(p).expanduser().absolute() for p in args.scan_dir]
+    if args.application and Path(args.application).expanduser().exists():
+        candidate = Path(args.application).expanduser().absolute()
+        if candidate.suffix == '.app':
+            extra.append(candidate)
+    for p in scan_apps(extra):
+        resolved = str(p.resolve())
+        if resolved in owned:
+            continue
+        manager, evidence = 'Unknown', '未发现受支持的管理器记录；不代表手动安装'
+        if (p / 'Contents/_MASReceipt/receipt').exists():
+            manager, evidence = 'App Store', '应用包含 _MASReceipt/receipt'
+        elif resolved.startswith('/System/'):
+            manager, evidence = 'macOS', '系统应用目录'
+        rows.append(record(p.stem, manager, evidence, [p]))
+    commands = set()
+    for folder in os.get_exec_path():
+        if not folder:
+            continue
+        try:
+            commands.update(p for p in Path(folder).glob('*') if p.is_file() and os.access(p, os.X_OK))
+        except OSError:
+            continue
+    if args.application:
+        p = Path(args.application).expanduser()
+        if p.is_file():
+            commands.add(p.absolute())
+    for p in sorted(commands):
+        resolved = str(p.resolve())
+        owner = owned.get(resolved)
+        if owner is None:
+            candidates = [(root, r) for root, r in owned.items() if resolved.startswith(root.rstrip('/') + '/')]
+            if candidates:
+                owner = max(candidates, key=lambda pair: len(pair[0]))[1]
+        if owner is not None:
+            if str(p) not in owner['paths']:
+                owner['paths'].append(str(p))
+            if p.name not in owner['aliases']:
+                owner['aliases'].append(p.name)
+            continue
+        system = str(p).startswith(('/usr/bin/', '/bin/', '/usr/sbin/', '/sbin/'))
+        rows.append(record(p.name, 'macOS' if system else 'Unknown', '系统命令目录' if system else 'PATH 或指定路径；无已关联管理记录', [p]))
+    query = args.search or args.application
+    if query:
+        rows = [r for r in rows if matches(r, query, bool(args.search))]
+    rows.sort(key=lambda r: (r['name'].casefold(), r['manager'], r['paths']))
+    if args.json:
+        print(json.dumps(dict(results=rows, warnings=warnings, managers_checked=list(collectors)), ensure_ascii=False, indent=2))
+    else:
+        for warning in warnings:
+            print('扫描未完成: ' + warning, file=sys.stderr)
+        print('名称\t管理来源\t路径 / 证据')
+        for r in rows:
+            print('\t'.join((r['name'], r['manager'], ', '.join(r['paths'][:3]) or r['evidence'])))
+        if not rows:
+            print('未找到匹配项；可尝试 --search 或 --scan-dir。')
+    return 0 if rows or args.list else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())
