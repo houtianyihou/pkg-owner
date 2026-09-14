@@ -116,11 +116,11 @@ def matches(row, query, fuzzy=False):
 def main():
     parser = argparse.ArgumentParser(description='查询 macOS 软件由谁管理（只读）')
     group = parser.add_mutually_exclusive_group()
-    group.add_argument('--list', action='store_true', help='列出已发现的软件与命令')
-    group.add_argument('--search', metavar='TEXT', help='模糊搜索：子串及相似拼写')
+    group.add_argument('-l', '--list', action='store_true', help='列出已发现的软件与命令')
+    group.add_argument('-s', '--search', metavar='TEXT', help='模糊搜索：子串及相似拼写')
     parser.add_argument('application', nargs='?', help='软件名、命令名或绝对路径')
-    parser.add_argument('--scan-dir', action='append', default=[], help='额外递归扫描目录，可重复')
-    parser.add_argument('--json', action='store_true', help='JSON 输出，包含证据与扫描警告')
+    parser.add_argument('-d', '--scan-dir', action='append', default=[], help='额外递归扫描目录，可重复')
+    parser.add_argument('-j', '--json', action='store_true', help='JSON 输出，包含证据与扫描警告')
     args = parser.parse_args()
     if not (args.list or args.search or args.application):
         parser.print_help()

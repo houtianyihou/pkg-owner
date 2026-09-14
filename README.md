@@ -14,6 +14,22 @@
 ./bin/pkg-owner --list --scan-dir ~/Tools --scan-dir /Volumes/Software
 ```
 
+快捷参数与长参数等价，可以组合使用：
+
+| 快捷参数 | 长参数 | 用途 |
+| --- | --- | --- |
+| `-s TEXT` | `--search TEXT` | 模糊搜索 |
+| `-l` | `--list` | 列出全部 |
+| `-j` | `--json` | JSON 输出 |
+| `-d PATH` | `--scan-dir PATH` | 额外扫描目录，可重复 |
+| `-h` | `--help` | 显示帮助 |
+
+```sh
+./bin/pkg-owner -s chrome
+./bin/pkg-owner -s python -j
+./bin/pkg-owner -l -d ~/Tools
+```
+
 `--search` 忽略大小写和标点，支持子串匹配及相似拼写（SequenceMatcher ≥ 0.72）。名称、别名、路径均参与搜索；位置参数使用精确匹配。多个安装来源或版本可能同时出现。
 
 要在任意目录直接使用一行命令，可在 `~/.zshrc` 添加（替换实际插件路径）：
