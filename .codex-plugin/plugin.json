@@ -1,7 +1,7 @@
 {
   "name": "pkg-owner",
-  "version": "0.1.0",
-  "description": "Read-only macOS software package ownership lookup with list and fuzzy search.",
+  "version": "0.2.0",
+  "description": "Rust CLI for read-only macOS software package ownership lookup with list and fuzzy search.",
   "author": {
     "name": "Local developer"
   },

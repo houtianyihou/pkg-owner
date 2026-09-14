@@ -3,7 +3,8 @@ name: pkg-owner
 description: Determine macOS application and command package ownership, list installed software, or fuzzy-search software using the bundled read-only pkg-owner CLI.
 ---
 
-Run `python3 <plugin-root>/bin/pkg-owner` with the user's requested name or path.
+Run `<plugin-root>/bin/pkg-owner` with the user's requested name or path.
+Build once with `cargo build --release --locked` from the plugin root if the release binary is missing. Rebuild after source changes. The CLI is implemented in Rust; Python is not required.
 Use `--list` / `-l` for an inventory, `--search TEXT` / `-s TEXT` for fuzzy search, and `--json` / `-j` for structured evidence.
 The plugin root is two directories above this skill directory.
 Use `--scan-dir PATH` / `-d PATH` for additional application directories.
