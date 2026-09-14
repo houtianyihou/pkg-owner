@@ -1,88 +1,148 @@
 # pkg-owner
 
-用一行命令查询 macOS 图形应用和命令行软件的包管理来源。Rust 实现，编译后的程序无需 Python 或 Rust 运行时。查询不会安装或更新软件。
+**查询 macOS 上的应用和命令由哪个包管理器管理，并查看判断依据。**
 
-## 构建与运行
+同一个软件可能通过 Homebrew、npm、App Store 等方式安装。`pkg-owner` 汇总当前环境中的管理器记录、应用目录和 PATH 命令，帮助你在更新、卸载或排查多版本问题前确认来源。
 
-需要 Rust/Cargo 工具链及 macOS 命令行开发工具。在项目目录执行：
+- 同时查询 `.app` 应用、命令名和文件路径。
+- 支持模糊搜索、拼写近似匹配和全量列表。
+- 提供文本表格及包含证据、路径、别名和警告的 JSON 输出。
+- 使用 Rust 实现，编译后的程序无需 Python 或 Rust 运行时。
+
+查询只读取安装信息，不执行软件安装、更新或卸载。**识别结果反映当前记录，不能证明软件最后一次被谁安装或覆盖。**
+
+## 快速开始
+
+### 从源码安装
+
+需要 macOS、Rust/Cargo 工具链及 macOS 命令行开发工具。
+
+```sh
+git clone https://github.com/houtianyihou/pkg-owner.git
+cd pkg-owner
+cargo install --path . --locked
+pkg-owner --help
+```
+
+Cargo 默认将可执行文件安装到 `~/.cargo/bin`。如果提示找不到 `pkg-owner`，请将 Cargo 的 bin 目录加入 PATH。
+
+### 在项目目录运行
+
+不做全局安装也可以使用：
 
 ```sh
 cargo build --release --locked
-./bin/pkg-owner -s claude
+./bin/pkg-owner -s chrome
 ```
 
-`bin/pkg-owner` 是兼容原使用方式的启动脚本，仅调用 `target/release/pkg-owner`。首次使用和修改源码后需要重新构建；脚本不会自动下载依赖或编译。也可直接调用二进制：
+`bin/pkg-owner` 是启动脚本，调用项目中的 `target/release/pkg-owner`；也可以直接运行该二进制。首次使用和修改源码后都需要手动构建，启动脚本不会自动下载依赖或编译。
+
+## 常用查询
 
 ```sh
-./target/release/pkg-owner python3
-./target/release/pkg-owner /opt/homebrew/bin/git
-```
+# 按命令名或完整应用名查询
+pkg-owner python3
+pkg-owner 'Visual Studio Code'
 
-全局安装（安装到 Cargo 的 bin 目录，通常是 `~/.cargo/bin`）：
+# 按路径查询；路径含空格时加引号
+pkg-owner /usr/bin/git
+pkg-owner '/Applications/Visual Studio Code.app'
 
-```sh
-cargo install --path . --locked
+# 不确定完整名称或拼写时，使用模糊搜索
 pkg-owner -s chrome
+pkg-owner -s chorme
+
+# 列出当前发现的全部软件与命令
+pkg-owner -l
+
+# 补充应用扫描目录，可指定多个
+pkg-owner -l -d ~/Tools -d /Volumes/Software
+
+# 输出 JSON，适合脚本处理
+pkg-owner -s python -j
 ```
 
-或继续使用原来的 PATH 设置：
+位置参数按归一化后的名称、别名或路径精确匹配；`--search` 还支持子串和近似拼写匹配。两者均忽略大小写与标点，模糊搜索也会匹配名称和路径中的分词。同名软件或多个安装来源可能返回多条结果。
 
-```sh
-export PATH="$HOME/Project/pkg-owner/bin:$PATH"
-```
+### 参数
 
-## 查询参数
-
-| 快捷参数 | 长参数 | 用途 |
-| --- | --- | --- |
-| `-s TEXT` | `--search TEXT` | 模糊搜索 |
-| `-l` | `--list` | 列出全部 |
-| `-j` | `--json` | JSON 输出 |
-| `-d PATH` | `--scan-dir PATH` | 额外扫描目录，可重复 |
-| `-h` | `--help` | 显示帮助 |
-| `-V` | `--version` | 显示版本 |
-
-```sh
-./bin/pkg-owner python3
-./bin/pkg-owner 'Visual Studio Code'
-./bin/pkg-owner -l
-./bin/pkg-owner -s chorme
-./bin/pkg-owner -s python -j
-./bin/pkg-owner -l -d ~/Tools -d /Volumes/Software
-```
-
-长短参数等价；`--list`、`--search`、位置参数互斥。`--search` 忽略大小写和标点，支持子串与相似拼写；相似度使用最长公共匹配块递归计算，阈值 0.72，保留原版常规软件名称的匹配行为。名称、别名、路径及其分词参与搜索。位置参数在同样的字符归一化后精确匹配。多个安装来源或版本可能同时出现。
-
-文本表格按 Unicode 显示宽度对齐，支持中文、组合字符和长应用名，并转义控制字符。超长路径保持完整，终端较窄时可能自然折行；机器读取请使用 `--json`。
-
-## 识别范围
-
-| 来源 | 依据 |
+| 参数 | 含义 |
 | --- | --- |
-| Homebrew Formula / Cask | 当前 PATH 中 brew 的已安装 JSON 记录，Formula 文件路径和 Cask 应用目标 |
-| npm 全局包 | 当前 npm 的全局包记录及模块路径，可追溯符号链接命令 |
-| pipx | pipx list JSON 安装记录 |
-| uv tool | uv 工具目录中的 uv-receipt.toml 安装记录，不调用可能创建缓存的 uv tool list |
-| Cargo | cargo install --list 安装记录 |
-| MacPorts | port installed 中的 active 记录 |
-| App Store | 应用内 `_MASReceipt/receipt` 存在 |
-| macOS | 系统应用或系统命令目录 |
-| Unknown | 已找到软件，但未关联受支持的管理器记录 |
+| `[APPLICATION]` | 软件名、命令名或路径 |
+| `-s, --search TEXT` | 模糊搜索 |
+| `-l, --list` | 列出全部发现结果 |
+| `-d, --scan-dir PATH` | 额外递归扫描应用的目录，可重复使用 |
+| `-j, --json` | 输出 JSON，包含证据与扫描警告 |
+| `-h, --help` | 显示帮助 |
+| `-V, --version` | 显示版本 |
 
-应用扫描包含 `/Applications`、`~/Applications`、`/System/Applications`、Spotlight 索引中的其他 `.app` 和 `--scan-dir` 指定目录；命令扫描包含 PATH 下的可执行文件，也支持显式文件路径。不会进入 `.app` 内部递归列出嵌套应用，也不递归跟随目录符号链接。
+位置参数、`--search` 和 `--list` 互斥。不带查询参数时显示帮助。
 
-## 证据边界
+## 如何解读结果
 
-- 管理器记录表示当前登记状态，不能证明最后一次覆盖安装的来源。已登记但被手动移除的软件仍可能出现在管理器结果中。
-- 未索引的其他目录需要 `--scan-dir`。不进行全磁盘扫描。
-- 只查询当前 PATH/环境所选择的各管理器实例；不枚举所有 Conda、venv、Node 版本和第二套 Homebrew。项目本地依赖与普通 pip 库不属于本次清单范围。
-- pipx、Cargo、MacPorts 提供包名登记结果；未关联路径的独立命令可能另列为 Unknown。不会仅凭同名断言文件所有权。
-- PKG 安装收据不等于持续管理来源，本版不将历史 PKG 收据推断为包管理器；不根据扩展属性推断“官网安装”。
-- 管理器并发采集，异常或超时以警告输出，其余扫描继续。单条外部命令超时为 40 秒。Spotlight 不可用时回退目录扫描；不可读目录可能被跳过。
-- `--json` 保留 `results`、`warnings`、`managers_checked`；每项含 `name`、`manager`、`evidence`、`paths` 和 `aliases`。退出码：成功 0，无匹配 1，参数错误 2。
-- 当前面向 macOS，使用 Unix 文件权限和进程组；未声明 Windows 支持。
+默认表格显示「名称」「管理来源」「路径 / 证据」。每条记录最多展示前三个路径；没有路径时显示判断依据。表格支持中文显示宽度对齐，长路径可能随终端宽度折行。需要完整路径和证据时使用 `--json`。
 
-## 开发与验证
+**`Unknown` 表示找到了软件，但没有关联到受支持的管理器记录，不等于“手动安装”或“官网安装”。** 包管理器登记的包与未能关联路径的命令也可能分别出现。
+
+### JSON 结构
+
+以下仅演示字段结构，不代表某台机器的实际扫描结果：
+
+```json
+{
+  "results": [
+    {
+      "name": "example-tool",
+      "manager": "Unknown",
+      "evidence": "PATH 或指定路径；无已关联管理记录",
+      "paths": ["/usr/local/bin/example-tool"],
+      "aliases": []
+    }
+  ],
+  "warnings": [],
+  "managers_checked": []
+}
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `results` | 匹配的记录；每项包含名称、来源、证据、路径和别名 |
+| `warnings` | 管理器采集失败或超时的信息 |
+| `managers_checked` | 在当前 PATH 中发现并尝试采集的管理器命令名，不表示采集全部成功 |
+
+文本模式将管理器警告写入标准错误；JSON 模式将其放在 `warnings` 中。单个管理器失败不会阻止其他结果输出，因此有结果不等于扫描完整。
+
+退出码：`0` 表示查询有匹配，或正常执行列表、帮助等操作；`1` 表示查询无匹配或发生非管道关闭的输出错误；`2` 表示参数错误。`--list` 即使结果为空也返回 `0`。脚本若要求完整采集，还应检查 `warnings`。
+
+## 支持的来源
+
+| 来源 | 识别依据 |
+| --- | --- |
+| Homebrew Formula | `brew info --json=v2 --installed` 记录及 Cellar 路径 |
+| Homebrew Cask | Homebrew 安装记录中的应用或命令目标路径 |
+| npm 全局包 | `npm ls -g` 记录及全局模块目录，可关联符号链接命令 |
+| pipx | `pipx list --json` 中的包名与命令别名 |
+| uv tool | 工具目录中的 `uv-receipt.toml` 文件；不调用 `uv tool list` |
+| Cargo | `cargo install --list` 中的包名记录 |
+| MacPorts | `port installed` 中标记为 active 的记录 |
+| App Store | 应用包含 `Contents/_MASReceipt/receipt` |
+| macOS | 系统应用目录或系统命令目录 |
+| Unknown | 已发现应用或文件，但没有关联的受支持记录 |
+
+无需安装所有管理器；程序只采集当前 PATH 中可找到的 `brew`、`npm`、`pipx`、`uv`、`cargo` 和 `port`。管理器并发采集，单条外部命令的超时为 40 秒，整个扫描可能包含多条命令。
+
+### 扫描范围与限制
+
+- **应用：** 扫描 `/Applications`、`~/Applications`、`/System/Applications`、Spotlight 索引中的其他应用，以及 `--scan-dir` 指定目录。目录递归扫描遇到 `.app` 后停止深入，不递归跟随目录符号链接。
+- **命令：** 扫描 PATH 各目录下的可执行文件，也接受显式文件路径。路径可与管理器记录关联时，会补充到对应记录中。
+- **非全盘扫描：** Spotlight 不可用时仍执行目录扫描；不可读目录可能被跳过。其他未索引目录需要通过 `--scan-dir` 补充。
+- **环境范围：** 只查询当前环境选择的管理器实例，不枚举所有 Conda、venv、Node 版本或第二套 Homebrew，也不列出项目本地依赖与普通 pip 库。
+- **归属边界：** 管理器登记不保证文件仍存在。pipx、Cargo、MacPorts 的包名记录不一定能关联到独立命令路径，程序不会仅凭同名判定文件归属。
+- **历史来源：** 不使用历史 PKG 安装收据推断持续管理来源，也不根据扩展属性判断“官网安装”。
+
+当前面向 macOS，使用 Unix 文件权限和进程组，未声明 Windows 支持。
+
+## 开发
 
 ```sh
 cargo fmt --check
@@ -91,6 +151,21 @@ cargo clippy --locked --all-targets -- -D warnings
 cargo build --release --locked
 ```
 
-模块：`collectors.rs` 采集管理器记录，`inventory.rs` 扫描并关联文件，`process.rs` 管理外部命令及超时，`lib.rs` 搜索和表格渲染，`main.rs` 解析参数并输出。单元测试覆盖搜索、列宽、路径归属和超时；集成测试使用隔离的假管理器验证六类来源、符号链接、短参数、失败降级及自定义应用目录。
+| 文件 | 职责 |
+| --- | --- |
+| [src/main.rs](src/main.rs) | 参数解析、输出与退出码 |
+| [src/collectors.rs](src/collectors.rs) | 管理器安装记录采集 |
+| [src/inventory.rs](src/inventory.rs) | 应用和命令扫描、路径归属关联 |
+| [src/lib.rs](src/lib.rs) | 搜索匹配与表格渲染 |
+| [src/process.rs](src/process.rs) | 外部命令执行、超时与进程组清理 |
+| [tests/cli.rs](tests/cli.rs) | 使用隔离的模拟管理器验证命令行行为 |
 
-项目也包含 Codex 插件清单和技能；无需安装到 Codex 即可独立使用命令行。未自动写入个人 marketplace。
+单元测试覆盖模糊搜索、Unicode 列宽、路径归属、目录扫描和进程超时；集成测试覆盖六类管理器、符号链接、长短参数、失败降级与自定义应用目录。模拟管理器测试不等于验证了所有真实管理器版本。
+
+## Codex 集成
+
+仓库附带 [插件清单](.codex-plugin/plugin.json) 和 [pkg-owner 技能](skills/pkg-owner/SKILL.md)，供 Codex 集成使用。命令行工具可以独立运行，无需安装 Codex 插件；构建和 Cargo 安装不会自动注册插件或写入个人 marketplace。
+
+## 许可证
+
+[MIT](LICENSE)
