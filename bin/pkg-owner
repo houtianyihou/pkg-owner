@@ -10,6 +10,7 @@ import re
 import shutil
 import subprocess
 import sys
+import unicodedata
 
 
 def run(args):
@@ -113,6 +114,26 @@ def matches(row, query, fuzzy=False):
     return False
 
 
+
+def display_width(text):
+    """Terminal columns for CJK, ASCII, and combining characters."""
+    return sum(0 if unicodedata.combining(c) or unicodedata.category(c) in ('Mn', 'Me', 'Cf')
+               else 2 if unicodedata.east_asian_width(c) in ('W', 'F') else 1
+               for c in text)
+
+
+def format_table(rows):
+    cells = [('名称', '管理来源', '路径 / 证据')]
+    cells += [(r['name'], r['manager'], ', '.join(r['paths'][:3]) or r['evidence']) for r in rows]
+    # Escape embedded controls so filenames cannot change the table layout.
+    cells = [tuple(''.join(('\\x%02x' % ord(c)) if unicodedata.category(c) == 'Cc' else c
+                           for c in value) for value in row) for row in cells]
+    widths = [max(display_width(row[i]) for row in cells) for i in range(2)]
+    return '\n'.join('  '.join(value + ' ' * (widths[i] - display_width(value))
+                              for i, value in enumerate(row[:2])) + '  ' + row[2]
+                     for row in cells)
+
+
 def main():
     parser = argparse.ArgumentParser(description='查询 macOS 软件由谁管理（只读）')
     group = parser.add_mutually_exclusive_group()
@@ -191,9 +212,7 @@ def main():
     else:
         for warning in warnings:
             print('扫描未完成: ' + warning, file=sys.stderr)
-        print('名称\t管理来源\t路径 / 证据')
-        for r in rows:
-            print('\t'.join((r['name'], r['manager'], ', '.join(r['paths'][:3]) or r['evidence'])))
+        print(format_table(rows))
         if not rows:
             print('未找到匹配项；可尝试 --search 或 --scan-dir。')
     return 0 if rows or args.list else 1
